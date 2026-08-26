@@ -9,12 +9,29 @@ A Model Context Protocol (MCP) server that connects [Google Search Console](http
 
 ## What's New
 
-### [Unreleased] — Hardened local profile
-- **Read-only by default** — OAuth uses `webmasters.readonly`, a separate token cache, and does not register Search Console write tools.
-- **Codex Desktop support** — documented local STDIO configuration with a tool allowlist and approval prompts.
-- **Local-only transport** — unauthenticated SSE/HTTP is rejected instead of disabling DNS-rebinding protection.
-- **Safer OAuth state** — non-interactive capability checks, atomic token replacement, private POSIX permissions, and opt-in reauthentication.
-- **Dependency advisory refresh** — patched minimums and lock entries for MCP, `httplib2`, `cryptography`, `pyasn1`, and `pydantic-settings`.
+### [Unreleased] — Hardened Codex Desktop profile
+
+Security and behavior:
+
+- **Read-only by default** — `GSC_ACCESS_MODE=read_only` requests Google's `webmasters.readonly` scope, stores it separately in `token.readonly.json`, and does not register Search Console mutation tools.
+- **Explicit write profiles** — sitemap submission, property/sitemap deletion, property addition, and browser reauthentication are absent from the default MCP surface and require separate operator opt-ins.
+- **Non-interactive status checks** — `get_capabilities` reports configuration state without contacting Google, opening OAuth, or writing a token.
+- **Safer OAuth persistence** — token refresh and reauthentication use atomic replacement; failed replacement preserves the prior credential, while private POSIX permissions and symbolic-link checks protect local token storage.
+- **Legacy-token warning** — read-only mode never reuses a legacy broad-scope `token.json` and reports when one remains for manual revocation/removal.
+- **Local-only transport** — unauthenticated SSE/HTTP is rejected; this branch supports local STDIO rather than disabling DNS-rebinding protection.
+
+Installation and supply chain:
+
+- **Codex Desktop and CLI support** — documented the shared Codex MCP configuration with a reviewed local interpreter, nine-tool allowlist, approval prompts, and conservative timeouts.
+- **Checkout-bound launchers** — bundled Claude and Cursor launchers run this checkout with `uv run --frozen` and bind both working directory and script path to the host-provided plugin root.
+- **Locked dependency path** — clone instructions use `uv sync --frozen`; advisory-affected floors and lock entries were refreshed for MCP, `httplib2`, `cryptography`, `pyasn1`, and `pydantic-settings`.
+- **Unsupported remote path removed** — the prior Docker/network launcher and runnable SSE guidance were removed from this hardened local branch.
+
+Validation:
+
+- **51 unit tests pass**, Python compilation succeeds, and critical Ruff checks pass.
+- **Security scans pass** — `pip-audit` reports no known vulnerabilities and Bandit reports no medium/high findings (two low exception-handling findings remain).
+- **Live MCP proof passes** — a real STDIO session exposes 15 read-only tools, zero write/reauthentication tools, and successfully completes read-only OAuth property and Search Analytics queries.
 
 ### [0.3.3] — July 2026
 - **Fixed fresh installs broken by `mcp` 2.0** — pinned `mcp[cli]<2.0.0`. The `mcp` SDK 2.0.0 (released 2026-07-28) removed the `mcp.server.fastmcp` module, so every fresh `uvx mcp-search-console` install crashed on startup with `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`. New installs now resolve a working 1.x SDK again — no `--with "mcp<2"` workaround needed.
