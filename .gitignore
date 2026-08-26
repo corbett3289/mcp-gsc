@@ -16,9 +16,9 @@ env/
 # Environment and credentials
 .env
 *.env
-service_account_credentials.json
+service_account*.json
 credentials.json
-token.json
+token*.json
 client_secret*.json
 
 # Editor-specific files

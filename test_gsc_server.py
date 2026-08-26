@@ -25,6 +25,8 @@ def _load_module(env_overrides: dict | None = None):
         "GSC_SKIP_OAUTH": "true",          # prevent live OAuth attempts by default
         "GSC_DATA_STATE": "all",
         "GSC_ALLOW_DESTRUCTIVE": "false",
+        "GSC_ACCESS_MODE": "read_only",
+        "GSC_ENABLE_REAUTH_TOOL": "false",
         **(env_overrides or {}),
     }
     with patch.dict(os.environ, env, clear=False):
@@ -57,7 +59,8 @@ class TestAuth(unittest.TestCase):
         if "gsc_server" in sys.modules:
             del sys.modules["gsc_server"]
         with patch.dict(os.environ, {"GSC_SKIP_OAUTH": "true", "GSC_DATA_STATE": "all",
-                                     "GSC_ALLOW_DESTRUCTIVE": "false"}, clear=False):
+                                     "GSC_ALLOW_DESTRUCTIVE": "false",
+                                     "GSC_ACCESS_MODE": "read_write"}, clear=False):
             import gsc_server as _tmp
         actual_script_dir = _tmp.SCRIPT_DIR
         del sys.modules["gsc_server"]
@@ -83,6 +86,7 @@ class TestAuth(unittest.TestCase):
                     "GSC_SKIP_OAUTH": "true",
                     "GSC_DATA_STATE": "all",
                     "GSC_ALLOW_DESTRUCTIVE": "false",
+                    "GSC_ACCESS_MODE": "read_write",
                     "GSC_CONFIG_DIR": new_config_dir,
                 }
                 with patch.dict(os.environ, env, clear=False):
@@ -128,7 +132,8 @@ class TestAuth(unittest.TestCase):
             with patch("gsc_server.Credentials.from_authorized_user_file", return_value=mock_creds), \
                  patch("gsc_server.build", return_value=MagicMock()), \
                  patch.object(mod, "TOKEN_FILE", os.path.join(tmpdir, "token.json")):
-                open(os.path.join(tmpdir, "token.json"), "w").write("{}")
+                with open(os.path.join(tmpdir, "token.json"), "w") as token_file:
+                    token_file.write("{}")
                 service = mod.get_gsc_service_oauth()
                 self.assertIsNotNone(service)
 
@@ -150,7 +155,8 @@ class TestAuth(unittest.TestCase):
             with patch("gsc_server.Credentials.from_authorized_user_file", return_value=mock_creds), \
                  patch.object(mod, "TOKEN_FILE", os.path.join(tmpdir, "token.json")), \
                  patch.object(mod, "OAUTH_CLIENT_SECRETS_FILE", os.path.join(tmpdir, "no_secrets.json")):
-                open(os.path.join(tmpdir, "token.json"), "w").write("{}")
+                with open(os.path.join(tmpdir, "token.json"), "w") as token_file:
+                    token_file.write("{}")
                 with self.assertRaises((RuntimeError, FileNotFoundError)):
                     mod.get_gsc_service_oauth()
 
@@ -673,6 +679,7 @@ class TestSafetyGuards(unittest.IsolatedAsyncioTestCase):
         mod = _load_module({"GSC_ALLOW_DESTRUCTIVE": "false"})
         result = await mod.add_site("https://newsite.com/")
         self.assertIn("Safety", result)
+        self.assertIn("read_only", result)
 
     async def test_delete_site_blocked_by_default(self):
         mod = _load_module({"GSC_ALLOW_DESTRUCTIVE": "false"})
@@ -684,8 +691,30 @@ class TestSafetyGuards(unittest.IsolatedAsyncioTestCase):
         result = await mod.delete_sitemap("https://example.com/", "https://example.com/sitemap.xml")
         self.assertIn("Safety", result)
 
-    async def test_add_site_allowed_when_flag_set(self):
+    async def test_submit_sitemap_blocked_in_read_only_mode(self):
         mod = _load_module({"GSC_ALLOW_DESTRUCTIVE": "true"})
+        with patch("gsc_server.get_gsc_service") as mock_service:
+            result = await mod.submit_sitemap(
+                "https://example.com/",
+                "https://example.com/sitemap.xml",
+            )
+        self.assertIn("Safety", result)
+        mock_service.assert_not_called()
+
+    async def test_destructive_write_blocked_without_flag_in_read_write_mode(self):
+        mod = _load_module({
+            "GSC_ACCESS_MODE": "read_write",
+            "GSC_ALLOW_DESTRUCTIVE": "false",
+        })
+        result = await mod.delete_site("https://example.com/")
+        self.assertIn("Safety", result)
+        self.assertIn("GSC_ALLOW_DESTRUCTIVE", result)
+
+    async def test_add_site_allowed_when_flag_set(self):
+        mod = _load_module({
+            "GSC_ACCESS_MODE": "read_write",
+            "GSC_ALLOW_DESTRUCTIVE": "true",
+        })
         service = _make_service()
         service.sites().add().execute.return_value = {}
         with patch("gsc_server.get_gsc_service", return_value=service):
@@ -693,7 +722,10 @@ class TestSafetyGuards(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Safety", result)
 
     async def test_delete_site_allowed_when_flag_set(self):
-        mod = _load_module({"GSC_ALLOW_DESTRUCTIVE": "true"})
+        mod = _load_module({
+            "GSC_ACCESS_MODE": "read_write",
+            "GSC_ALLOW_DESTRUCTIVE": "true",
+        })
         service = _make_service()
         service.sites().delete().execute.return_value = {}
         with patch("gsc_server.get_gsc_service", return_value=service):
@@ -701,12 +733,102 @@ class TestSafetyGuards(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Safety", result)
 
     async def test_delete_sitemap_allowed_when_flag_set(self):
-        mod = _load_module({"GSC_ALLOW_DESTRUCTIVE": "true"})
+        mod = _load_module({
+            "GSC_ACCESS_MODE": "read_write",
+            "GSC_ALLOW_DESTRUCTIVE": "true",
+        })
         service = _make_service()
         service.sitemaps().delete().execute.return_value = {}
         with patch("gsc_server.get_gsc_service", return_value=service):
             result = await mod.delete_sitemap("https://example.com/", "https://example.com/sitemap.xml")
         self.assertNotIn("Safety", result)
+
+    async def test_submit_sitemap_allowed_in_read_write_mode(self):
+        mod = _load_module({"GSC_ACCESS_MODE": "read_write"})
+        service = _make_service()
+        service.sitemaps().submit().execute.return_value = {}
+        service.sitemaps().get().execute.return_value = {}
+        with patch("gsc_server.get_gsc_service", return_value=service):
+            result = await mod.submit_sitemap(
+                "https://example.com/",
+                "https://example.com/sitemap.xml",
+            )
+        self.assertIn("Successfully submitted", result)
+
+
+# ---------------------------------------------------------------------------
+# TestHardenedProfile
+# ---------------------------------------------------------------------------
+
+class TestHardenedProfile(unittest.IsolatedAsyncioTestCase):
+
+    async def test_default_profile_registers_read_only_tools_only(self):
+        mod = _load_module()
+        tools = await mod.mcp.list_tools()
+        names = {tool.name for tool in tools}
+
+        self.assertEqual(
+            mod.SCOPES,
+            ["https://www.googleapis.com/auth/webmasters.readonly"],
+        )
+        self.assertTrue(mod.TOKEN_FILE.endswith("token.readonly.json"))
+        for write_tool in {
+            "add_site",
+            "delete_site",
+            "submit_sitemap",
+            "delete_sitemap",
+            "manage_sitemaps",
+            "reauthenticate",
+        }:
+            self.assertNotIn(write_tool, names)
+
+    async def test_read_write_profile_registers_write_tools_only_when_explicit(self):
+        mod = _load_module({
+            "GSC_ACCESS_MODE": "read_write",
+            "GSC_ENABLE_REAUTH_TOOL": "true",
+        })
+        tools = await mod.mcp.list_tools()
+        names = {tool.name for tool in tools}
+
+        self.assertEqual(
+            mod.SCOPES,
+            ["https://www.googleapis.com/auth/webmasters"],
+        )
+        self.assertTrue(mod.TOKEN_FILE.endswith("token.json"))
+        self.assertIn("submit_sitemap", names)
+        self.assertIn("reauthenticate", names)
+
+    async def test_get_capabilities_never_starts_oauth(self):
+        mod = _load_module({"GSC_SKIP_OAUTH": "false"})
+        with patch("gsc_server.get_gsc_service") as mock_service, \
+             patch.object(mod, "_OLD_TOKEN", os.path.join(mod.SCRIPT_DIR, "missing-legacy-token.json")):
+            result = await mod.get_capabilities()
+
+        data = json.loads(result)
+        self.assertEqual(data["access_mode"], "read_only")
+        self.assertTrue(data["auth_status_is_non_interactive"])
+        self.assertFalse(data["legacy_broad_scope_token_present_not_used"])
+        mock_service.assert_not_called()
+
+    async def test_get_capabilities_flags_ignored_legacy_token(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            legacy_token = os.path.join(tmpdir, "token.json")
+            with open(legacy_token, "w") as token_file:
+                token_file.write('{"legacy": true}')
+
+            mod = _load_module({"GSC_CONFIG_DIR": tmpdir})
+            with patch.object(mod, "_OLD_TOKEN", legacy_token):
+                data = json.loads(await mod.get_capabilities())
+
+        self.assertTrue(data["legacy_broad_scope_token_present_not_used"])
+
+    def test_remote_transport_is_rejected(self):
+        mod = _load_module()
+        with patch.dict(os.environ, {"MCP_TRANSPORT": "sse"}, clear=False), \
+             patch.object(mod.mcp, "run") as mock_run:
+            with self.assertRaises(ValueError):
+                mod.main()
+        mock_run.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -715,12 +837,14 @@ class TestSafetyGuards(unittest.IsolatedAsyncioTestCase):
 
 class TestReauthenticate(unittest.IsolatedAsyncioTestCase):
 
-    async def test_deletes_token_file(self):
+    async def test_replaces_token_file_after_success(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             token_path = os.path.join(tmpdir, "token.json")
-            open(token_path, "w").write('{"old": "token"}')
+            with open(token_path, "w") as token_file:
+                token_file.write('{"old": "token"}')
             secrets_path = os.path.join(tmpdir, "secrets.json")
-            open(secrets_path, "w").write("{}")
+            with open(secrets_path, "w") as secrets_file:
+                secrets_file.write("{}")
 
             mod = _load_module()
 
@@ -736,15 +860,23 @@ class TestReauthenticate(unittest.IsolatedAsyncioTestCase):
                 result = await mod.reauthenticate()
 
             self.assertIn("Successfully authenticated", result)
-            self.assertIn("Previous session deleted", result)
+            self.assertIn("Previous session replaced", result)
             self.assertTrue(os.path.exists(token_path))
+            with open(token_path) as token_file:
+                self.assertEqual(token_file.read(), '{"token": "new"}')
 
-    async def test_returns_error_when_no_secrets_file(self):
+    async def test_missing_secrets_preserves_existing_token(self):
         with tempfile.TemporaryDirectory() as tmpdir:
+            token_path = os.path.join(tmpdir, "token.json")
+            with open(token_path, "w") as token_file:
+                token_file.write('{"old": "token"}')
             mod = _load_module()
-            with patch.object(mod, "OAUTH_CLIENT_SECRETS_FILE", os.path.join(tmpdir, "no_secrets.json")):
+            with patch.object(mod, "TOKEN_FILE", token_path), \
+                 patch.object(mod, "OAUTH_CLIENT_SECRETS_FILE", os.path.join(tmpdir, "no_secrets.json")):
                 result = await mod.reauthenticate()
-        self.assertIn("Error", result)
+            self.assertIn("Error", result)
+            with open(token_path) as token_file:
+                self.assertEqual(token_file.read(), '{"old": "token"}')
 
 
 # ---------------------------------------------------------------------------

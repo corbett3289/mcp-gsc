@@ -1,6 +1,6 @@
 # Google Search Console MCP Server for SEOs
 
-A Model Context Protocol (MCP) server that connects [Google Search Console](https://search.google.com/search-console/about) (GSC) to AI assistants, allowing you to analyze your SEO data through natural language conversations. Works with **Claude Desktop**, **Cursor**, **Codex CLI**, **Gemini CLI**, **Antigravity**, and any other MCP-compatible client.
+A Model Context Protocol (MCP) server that connects [Google Search Console](https://search.google.com/search-console/about) (GSC) to AI assistants, allowing you to analyze your SEO data through natural language conversations. Works with **Claude Desktop**, **Cursor**, **Codex Desktop and CLI**, **Gemini CLI**, **Antigravity**, and any other MCP-compatible client.
 
 > **Skip setup, get more.** A more advanced hosted version — one-click sign-in, added GA4 tools. Works with Claude Desktop, Claude Code, Claude.ai, Codex, Cursor, and any MCP client. Only **100 seats**.
 > → [**Advanced GSC MCP (hosted)**](https://www.advancedgsc.com/mcp?utm_source=github&utm_medium=readme&utm_campaign=mcp-gsc&utm_content=hero-callout)
@@ -8,6 +8,13 @@ A Model Context Protocol (MCP) server that connects [Google Search Console](http
 ---
 
 ## What's New
+
+### [Unreleased] — Hardened local profile
+- **Read-only by default** — OAuth uses `webmasters.readonly`, a separate token cache, and does not register Search Console write tools.
+- **Codex Desktop support** — documented local STDIO configuration with a tool allowlist and approval prompts.
+- **Local-only transport** — unauthenticated SSE/HTTP is rejected instead of disabling DNS-rebinding protection.
+- **Safer OAuth state** — non-interactive capability checks, atomic token replacement, private POSIX permissions, and opt-in reauthentication.
+- **Dependency advisory refresh** — patched minimums and lock entries for MCP, `httplib2`, `cryptography`, `pyasn1`, and `pydantic-settings`.
 
 ### [0.3.3] — July 2026
 - **Fixed fresh installs broken by `mcp` 2.0** — pinned `mcp[cli]<2.0.0`. The `mcp` SDK 2.0.0 (released 2026-07-28) removed the `mcp.server.fastmcp` module, so every fresh `uvx mcp-search-console` install crashed on startup with `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`. New installs now resolve a working 1.x SDK again — no `--with "mcp<2"` workaround needed.
@@ -24,7 +31,7 @@ A Model Context Protocol (MCP) server that connects [Google Search Console](http
 **Property Management**
 - See all your GSC properties in one place
 - Get verification details and ownership information
-- Add or remove properties from your account
+- Add or remove properties from a separately enabled read/write profile
 
 **Search Analytics & Reporting**
 - Discover which queries bring visitors to your site
@@ -39,7 +46,7 @@ A Model Context Protocol (MCP) server that connects [Google Search Console](http
 
 **Sitemap Management**
 - View all sitemaps and their status
-- Submit new sitemaps
+- Submit new sitemaps from a separately enabled read/write profile
 - Check for errors or warnings
 
 ---
@@ -61,10 +68,10 @@ A Model Context Protocol (MCP) server that connects [Google Search Console](http
 | `check_indexing_issues` | Check multiple URLs for indexing problems | Site URL, list of URLs |
 | `get_sitemaps` | Lists all sitemaps for a site | Site URL |
 | `list_sitemaps_enhanced` | Detailed sitemap info including errors and warnings | Site URL |
-| `manage_sitemaps` | Submit or delete sitemaps | Site URL, action |
-| `reauthenticate` | Re-run the OAuth browser login (switch accounts) | Nothing |
+| `get_sitemap_details` | Details for one submitted sitemap | Site URL, sitemap URL |
+| `get_creator_info` | Project author and related-tool metadata | Nothing |
 
-*Ask your AI assistant to "call get_capabilities" for the full list of all 20 tools.*
+The default `read_only` profile registers 15 tools and omits all Search Console writes plus `reauthenticate`. A separately configured `read_write` profile can expose `submit_sitemap`, `manage_sitemaps`, `add_site`, `delete_site`, and `delete_sitemap`; `reauthenticate` has its own explicit opt-in.
 
 ---
 
@@ -109,17 +116,23 @@ On first use, a browser window will open asking you to sign in to your Google ac
   </a>
 </div>
 
-*Updated 2026 — covers the full installation process using the new uvx method, from setting up your Google credentials to your first successful query.*
+*The video covers the upstream published-package flow. For this hardened branch, use the locked local-clone instructions below.*
 
 ---
 
 ### Step 2 — Installation
 
-#### Option A — uvx (Recommended)
+#### Install `uv`
 
-No cloning, no Python installation, no virtual environments. `uvx` downloads and runs the server automatically and keeps it up to date.
+`uv` provisions the required Python runtime and installs the exact dependency graph from `uv.lock`. This hardened branch deliberately does not use `uvx mcp-search-console`: that command runs the separately published upstream package rather than the source in this checkout.
 
-**Install uv** — open Terminal and run all three commands in order:
+**Install uv** — on Windows PowerShell:
+
+```powershell
+winget install --id astral-sh.uv -e
+```
+
+On macOS/Linux, run all three commands in order:
 
 ```bash
 # 1. Download and install
@@ -139,7 +152,15 @@ uv --version
 
 > **Why all three commands?** The installer puts `uv` in `~/.local/bin`, but your already-open Terminal session doesn't know about that folder yet. Step 2 activates it immediately. Step 3 ensures every future Terminal window has it automatically.
 
-Now configure your AI client:
+Clone and sync the reviewed branch before configuring your AI client:
+
+```bash
+git clone --branch security/codex-desktop-readonly --single-branch https://github.com/corbett3289/mcp-gsc.git
+cd mcp-gsc
+uv sync --frozen
+```
+
+`uv sync --frozen` provisions the Python version declared by the repository when needed. On macOS/Linux the interpreter is `.venv/bin/python`; on Windows it is `.venv/Scripts/python.exe`.
 
 ---
 
@@ -152,10 +173,13 @@ OAuth:
 {
   "mcpServers": {
     "gscServer": {
-      "command": "/FULL/PATH/TO/uvx",
-      "args": ["mcp-search-console"],
+      "command": "/FULL/PATH/TO/mcp-gsc/.venv/bin/python",
+      "args": ["/FULL/PATH/TO/mcp-gsc/gsc_server.py"],
       "env": {
-        "GSC_OAUTH_CLIENT_SECRETS_FILE": "/full/path/to/client_secrets.json"
+        "GSC_OAUTH_CLIENT_SECRETS_FILE": "/full/path/to/client_secrets.json",
+        "GSC_ACCESS_MODE": "read_only",
+        "GSC_ENABLE_REAUTH_TOOL": "false",
+        "GSC_ALLOW_DESTRUCTIVE": "false"
       }
     }
   }
@@ -167,11 +191,14 @@ Service Account:
 {
   "mcpServers": {
     "gscServer": {
-      "command": "/FULL/PATH/TO/uvx",
-      "args": ["mcp-search-console"],
+      "command": "/FULL/PATH/TO/mcp-gsc/.venv/bin/python",
+      "args": ["/FULL/PATH/TO/mcp-gsc/gsc_server.py"],
       "env": {
         "GSC_CREDENTIALS_PATH": "/full/path/to/service_account.json",
-        "GSC_SKIP_OAUTH": "true"
+        "GSC_SKIP_OAUTH": "true",
+        "GSC_ACCESS_MODE": "read_only",
+        "GSC_ENABLE_REAUTH_TOOL": "false",
+        "GSC_ALLOW_DESTRUCTIVE": "false"
       }
     }
   }
@@ -189,10 +216,13 @@ OAuth:
 {
   "mcpServers": {
     "gscServer": {
-      "command": "/FULL/PATH/TO/uvx",
-      "args": ["mcp-search-console"],
+      "command": "/FULL/PATH/TO/mcp-gsc/.venv/bin/python",
+      "args": ["/FULL/PATH/TO/mcp-gsc/gsc_server.py"],
       "env": {
-        "GSC_OAUTH_CLIENT_SECRETS_FILE": "/full/path/to/client_secrets.json"
+        "GSC_OAUTH_CLIENT_SECRETS_FILE": "/full/path/to/client_secrets.json",
+        "GSC_ACCESS_MODE": "read_only",
+        "GSC_ENABLE_REAUTH_TOOL": "false",
+        "GSC_ALLOW_DESTRUCTIVE": "false"
       }
     }
   }
@@ -201,104 +231,51 @@ OAuth:
 
 ---
 
-**Codex CLI**
+**Codex Desktop and CLI — hardened local clone**
 
 Config file: `~/.codex/config.toml`
 
-OAuth:
+The Desktop app and CLI share this configuration on the same Codex host. Point them at the reviewed clone and begin with a small read-only allowlist:
+
 ```toml
 [mcp_servers.gscServer]
-command = "/FULL/PATH/TO/uvx"
-args = ["mcp-search-console"]
+command = "C:/FULL/PATH/TO/mcp-gsc/.venv/Scripts/python.exe"
+args = ["C:/FULL/PATH/TO/mcp-gsc/gsc_server.py"]
+cwd = "C:/FULL/PATH/TO/mcp-gsc"
 enabled = true
-env = { GSC_OAUTH_CLIENT_SECRETS_FILE = "/full/path/to/client_secrets.json" }
+required = false
+enabled_tools = [
+  "get_capabilities",
+  "list_properties",
+  "get_site_details",
+  "get_search_analytics",
+  "get_performance_overview",
+  "get_sitemaps",
+  "list_sitemaps_enhanced",
+  "get_sitemap_details",
+  "inspect_url_enhanced",
+]
+default_tools_approval_mode = "prompt"
+startup_timeout_sec = 30
+tool_timeout_sec = 120
+
+[mcp_servers.gscServer.env]
+GSC_OAUTH_CLIENT_SECRETS_FILE = "C:/FULL/PATH/TO/client_secrets.json"
+GSC_ACCESS_MODE = "read_only"
+GSC_ENABLE_REAUTH_TOOL = "false"
+GSC_ALLOW_DESTRUCTIVE = "false"
+GSC_DATA_STATE = "final"
 ```
 
-Service Account:
-```toml
-[mcp_servers.gscServer]
-command = "/FULL/PATH/TO/uvx"
-args = ["mcp-search-console"]
-enabled = true
-env = { GSC_CREDENTIALS_PATH = "/full/path/to/service_account.json", GSC_SKIP_OAUTH = "true" }
-```
+Save the file, restart Codex Desktop, and use `/mcp` to confirm the server attached. `get_capabilities` is non-interactive; the first call to `list_properties` starts the local Google OAuth flow when login is still required.
 
 ---
 
-> **Finding your uvx path:** On macOS/Linux run `which uvx` in Terminal after installing uv (typically `/Users/YOUR_NAME/.local/bin/uvx`). On Windows, run `Get-Command uvx | Select-Object -ExpandProperty Source` in PowerShell (or `where uvx` in cmd) — it's usually `C:\Users\YOUR_NAME\.local\bin\uvx.exe`. Replace `/FULL/PATH/TO/uvx` in the configs above with that path.
->
-> **Why the full path?** GUI apps like Claude Desktop and Cursor launch without reading your shell config (`~/.zshrc`), so they don't know about `~/.local/bin`. Using the full path guarantees it works regardless of how the app is launched. If you see a `spawn uvx ENOENT` error, this is the fix.
+> **Why absolute paths?** GUI apps may launch with a smaller environment than your terminal. Pointing directly at the clone's virtual-environment interpreter and `gsc_server.py` ensures the reviewed local code is what receives the Google credential.
 
 After saving the config, **fully quit the app (`Cmd+Q`) and reopen it**.
 
 For OAuth: on first use, a browser window will open automatically for login. After that, the token is cached and you won't be asked again.
-
----
-
-#### Option B — Clone (Advanced)
-
-**Prefer a video walkthrough for this method?** The tutorial below covers the clone install path step by step — virtual environment setup, dependencies, and config:
-
-<div align="center">
-  <a href="https://youtu.be/PCWsK5BgSd0">
-    <img src="assets/gsc-mcp-seo-video-2.jpg" alt="Google Search Console API Setup Tutorial" width="600" style="margin: 20px 0; border-radius: 8px;">
-  </a>
-</div>
-
-Use this if you want to modify the code or run a specific local version. This method uses the video tutorial above for the credential setup steps.
-
-> **Requires Python 3.11+.** This server will not start on Python 3.10 or older — and when it's launched by a GUI client like Claude Desktop, it fails silently (no tools appear and no log file is written). Check your version with `python --version`. If it's below 3.11, install [Python 3.11 or newer](https://www.python.org/downloads/) and recreate your virtual environment. The uvx method (Option A) avoids this entirely by managing the Python version for you, so it's the recommended path on Windows.
-
-**Clone the repo:**
-```bash
-git clone https://github.com/AminForou/mcp-gsc.git
-cd mcp-gsc
-```
-
-Or download the ZIP from the green Code button at the top of this page and unzip it.
-
-**Set up the environment:**
-```bash
-uv venv .venv
-uv pip install -r requirements.txt
-```
-
-**Configure your AI client** (Claude Desktop example):
-
-OAuth:
-```json
-{
-  "mcpServers": {
-    "gscServer": {
-      "command": "/full/path/to/mcp-gsc/.venv/bin/python",
-      "args": ["/full/path/to/mcp-gsc/gsc_server.py"],
-      "env": {
-        "GSC_OAUTH_CLIENT_SECRETS_FILE": "/full/path/to/client_secrets.json"
-      }
-    }
-  }
-}
-```
-
-Service Account:
-```json
-{
-  "mcpServers": {
-    "gscServer": {
-      "command": "/full/path/to/mcp-gsc/.venv/bin/python",
-      "args": ["/full/path/to/mcp-gsc/gsc_server.py"],
-      "env": {
-        "GSC_CREDENTIALS_PATH": "/full/path/to/service_account.json",
-        "GSC_SKIP_OAUTH": "true"
-      }
-    }
-  }
-}
-```
-
-Mac path examples:
-- Python: `/Users/yourname/Documents/mcp-gsc/.venv/bin/python`
-- Script: `/Users/yourname/Documents/mcp-gsc/gsc_server.py`
 
 ---
 
@@ -314,17 +291,19 @@ If you see your properties — it's working. If not, ask: **"Call get_capabiliti
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `GSC_OAUTH_CLIENT_SECRETS_FILE` | OAuth only | — | Absolute path to your OAuth client secrets JSON. Always required when using `uvx`. |
-| `GSC_CREDENTIALS_PATH` | Service account only | — | Absolute path to your service account JSON key. Always required when using `uvx`. |
+| `GSC_OAUTH_CLIENT_SECRETS_FILE` | OAuth only | — | Absolute path to your OAuth client secrets JSON. Keep it outside the repository. |
+| `GSC_CREDENTIALS_PATH` | Service account only | — | Absolute path to your service account JSON key. Keep it outside the repository. |
 | `GSC_SKIP_OAUTH` | No | `false` | Set to `"true"` to force service account auth and skip OAuth entirely |
+| `GSC_ACCESS_MODE` | No | `"read_only"` | `"read_only"` requests the Google read-only scope and does not register write tools. `"read_write"` uses a separate token cache and exposes write tools. |
+| `GSC_ENABLE_REAUTH_TOOL` | No | `false` | Set to `"true"` only when the model-visible browser reauthentication tool is explicitly needed. |
 | `GSC_DATA_STATE` | No | `"all"` | `"all"` matches the GSC dashboard. `"final"` returns only confirmed data (2–3 day lag). |
-| `GSC_ALLOW_DESTRUCTIVE` | No | `false` | Set to `"true"` to enable add/delete site and delete sitemap tools |
+| `GSC_ALLOW_DESTRUCTIVE` | No | `false` | In a `read_write` profile, set to `"true"` to enable add/delete site and delete sitemap operations. It has no effect in `read_only`. |
 
 ---
 
 ## Cursor Marketplace
 
-One-click install available — search for `mcp-search-console` in the Cursor Marketplace.
+The one-click Cursor Marketplace entry installs the separately published upstream package, not this hardened checkout. Use the local-clone configuration above when you need this branch's security profile.
 
 After installing, configure your credentials (see Step 1 above) then use the bundled skills directly in Cursor Agent chat:
 
@@ -353,23 +332,23 @@ After installing, configure your credentials (see Step 1 above) then use the bun
 
 ## Troubleshooting
 
-### `spawn uvx ENOENT` or `command not found: uvx`
+### `spawn uv ENOENT` or `command not found: uv`
 
-Your AI client can't find `uvx`. Use the full path instead of just `uvx`:
+Your AI client can't find `uv`. Use the full path instead of just `uv` in repository-owned launch configurations:
 
 ```bash
 # Find your full path (macOS/Linux):
-which uvx
-# Typically: /Users/YOUR_NAME/.local/bin/uvx
+which uv
+# Typically: /Users/YOUR_NAME/.local/bin/uv
 ```
 
 ```powershell
 # Find your full path (Windows PowerShell):
-Get-Command uvx | Select-Object -ExpandProperty Source
-# Typically: C:\Users\YOUR_NAME\.local\bin\uvx.exe
+Get-Command uv | Select-Object -ExpandProperty Source
+# Typically: C:\Users\YOUR_NAME\.local\bin\uv.exe
 ```
 
-Replace `"command": "uvx"` with the full path (e.g. `"command": "/Users/YOUR_NAME/.local/bin/uvx"`) in your config.
+Replace `"command": "uv"` with the full executable path. Do not replace it with `uvx mcp-search-console`, which bypasses the local checkout.
 
 ### `uv --version` gives "command not found" right after installing
 
@@ -386,7 +365,7 @@ echo 'source $HOME/.local/bin/env' >> ~/.zshrc
 
 ### Authentication failed / credentials file not found
 
-Make sure you are using the **absolute path** to your credentials file — not a relative path, not `~/`. Example:
+Use an **absolute path** or a `~/` path to your credentials file, not a path relative to the repository. Example:
 ```
 /Users/yourname/Documents/client_secrets.json   ✅
 ~/Documents/client_secrets.json                 ✅
@@ -407,7 +386,11 @@ The MCP server runs locally on your machine. It only works in the **Claude Deskt
 
 ## Safety: Destructive Operations
 
-By default, `add_site`, `delete_site`, and `delete_sitemap` are disabled. To enable them:
+The default `GSC_ACCESS_MODE=read_only` profile requests Google's read-only OAuth scope and does not register any Search Console mutation tools. Keep that profile for routine analysis.
+
+If upgrading from version 0.3.3 or earlier, the hardened read-only profile intentionally ignores any legacy `token.json` in the checkout because it may carry the broader read/write scope. After confirming no separate read/write profile needs it, revoke that grant in your Google Account and remove the legacy file; never copy it to `token.readonly.json`.
+
+If writes are genuinely required, configure a separately named server with a separate token/config directory, set `GSC_ACCESS_MODE=read_write`, and complete new OAuth consent. Sitemap submission is then available; add/delete property and delete sitemap remain blocked unless this second flag is also present:
 
 ```json
 "GSC_ALLOW_DESTRUCTIVE": "true"
@@ -415,36 +398,11 @@ By default, `add_site`, `delete_site`, and `delete_sitemap` are disabled. To ena
 
 ---
 
-## Remote Deployment & Docker (Advanced)
+## Remote Deployment (Unsupported in This Branch)
 
-The standard setup runs the server locally. This section is only for users who want to run it on a remote server or in a container.
+This hardened build intentionally supports local STDIO only. The prior SSE example exposed Google-authorized tools without server authentication and disabled the SDK's DNS-rebinding protection.
 
-### HTTP Transport
-
-```bash
-MCP_TRANSPORT=sse MCP_HOST=0.0.0.0 MCP_PORT=3001 python gsc_server.py
-```
-
-| Variable | Default | Description |
-|---|---|---|
-| `MCP_TRANSPORT` | `stdio` | Set to `sse` for network/remote use |
-| `MCP_HOST` | `127.0.0.1` | Host to bind |
-| `MCP_PORT` | `3001` | Port to bind |
-
-### Docker
-
-```bash
-docker build -t mcp-gsc .
-
-docker run \
-  -e MCP_TRANSPORT=sse \
-  -e MCP_HOST=0.0.0.0 \
-  -e MCP_PORT=3001 \
-  -e GSC_CREDENTIALS_PATH=/app/credentials.json \
-  -v /path/to/credentials.json:/app/credentials.json \
-  -p 3001:3001 \
-  mcp-gsc
-```
+Do not re-enable a network transport by merely binding a port. A remote deployment needs TLS, bearer/OAuth authentication, network access controls, and explicit Host/Origin validation before it can be considered safe.
 
 ---
 

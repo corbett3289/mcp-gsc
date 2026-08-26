@@ -10,15 +10,16 @@ Single file: `gsc_server.py` (~1,670 lines). Built with FastMCP — no custom fr
 ## Running locally
 
 ```bash
-uv sync
-uv run python gsc_server.py
+uv sync --frozen
+uv run --frozen python gsc_server.py
 ```
 
 ## Auth
 
-Two modes, tried in order:
+Two modes, tried in order. Keep credentials outside the repository and pass an
+absolute path:
 
-1. **OAuth (default):** Place `client_secrets.json` in the repo root. On first run, a browser window opens for Google login. Token saved to `token.json` (gitignored), auto-refreshes when expired.
+1. **OAuth (default):** Set `GSC_OAUTH_CLIENT_SECRETS_FILE` to a Desktop-app OAuth client JSON. On first use, a browser opens for Google login. The default read-only profile saves `token.readonly.json` under the platform user config directory and auto-refreshes it when expired.
 2. **Service account:** Set `GSC_CREDENTIALS_PATH` to the path of your service account JSON key file.
 
 Set `GSC_SKIP_OAUTH=true` to force service account mode and skip OAuth entirely.
@@ -27,11 +28,11 @@ Set `GSC_SKIP_OAUTH=true` to force service account mode and skip OAuth entirely.
 
 | Variable | Default | Description |
 |---|---|---|
-| `MCP_TRANSPORT` | `stdio` | Set to `sse` for remote/Docker/network use |
-| `MCP_HOST` | `127.0.0.1` | Host to bind when `MCP_TRANSPORT=sse` |
-| `MCP_PORT` | `3001` | Port to bind when `MCP_TRANSPORT=sse` |
+| `MCP_TRANSPORT` | `stdio` | Local STDIO only; other values fail closed in this hardened branch |
+| `GSC_ACCESS_MODE` | `read_only` | `read_only` removes all Search Console writes and uses the read-only OAuth scope; use a separately configured `read_write` profile if required |
+| `GSC_ENABLE_REAUTH_TOOL` | `false` | Opt in only if browser reauthentication must be model-visible |
 | `GSC_DATA_STATE` | `all` | `all` = matches GSC dashboard; `final` = confirmed data only (2–3 day lag) |
-| `GSC_ALLOW_DESTRUCTIVE` | `false` | Set `true` to enable `add_site`, `delete_site`, `delete_sitemap` |
+| `GSC_ALLOW_DESTRUCTIVE` | `false` | In a `read_write` profile, set `true` to enable add/delete site and delete sitemap |
 | `GSC_CREDENTIALS_PATH` | — | Path to service account JSON key file |
 | `GSC_OAUTH_CLIENT_SECRETS_FILE` | `client_secrets.json` | Path to OAuth client secrets file |
 | `GSC_SKIP_OAUTH` | `false` | Set `true` to skip OAuth and use service account only |
@@ -65,11 +66,8 @@ pytest test_gsc_server.py -v
 
 No credentials needed — all Google API calls are mocked with `unittest.mock`.
 
-## Docker
+## Network deployment
 
-```bash
-docker build -t mcp-gsc .
-docker run -e MCP_TRANSPORT=sse -e MCP_PORT=3001 \
-  -v /path/to/client_secrets.json:/app/client_secrets.json \
-  -p 3001:3001 mcp-gsc
-```
+Remote transports and the previous Docker launcher are intentionally absent from
+this hardened local branch. A safe remote MCP deployment requires TLS, client
+authentication, network access controls, and explicit Host/Origin validation.
